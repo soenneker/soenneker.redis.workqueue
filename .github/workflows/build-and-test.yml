@@ -1,0 +1,55 @@
+name: build-and-test
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  PipelineEnvironment: true
+  NUGET_XMLDOC_MODE: skip
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+     redis: 
+       image: redis
+       # Set health checks to wait until redis has started
+       options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+       ports:
+         - 6379:6379
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore tests
+        run: dotnet restore test/Soenneker.Redis.WorkQueue.Tests/Soenneker.Redis.WorkQueue.Tests.csproj --verbosity minimal
+
+      - name: Build tests
+        run: dotnet build test/Soenneker.Redis.WorkQueue.Tests/Soenneker.Redis.WorkQueue.Tests.csproj --configuration Release --no-restore --verbosity minimal
+
+      - name: Test
+        run: dotnet test --project test/Soenneker.Redis.WorkQueue.Tests/Soenneker.Redis.WorkQueue.Tests.csproj --configuration Release --no-build --no-restore --verbosity minimal
+
+      - name: Pack
+        run: dotnet pack src/Soenneker.Redis.WorkQueue/Soenneker.Redis.WorkQueue.csproj --configuration Release --no-build --no-restore --output . --verbosity minimal
