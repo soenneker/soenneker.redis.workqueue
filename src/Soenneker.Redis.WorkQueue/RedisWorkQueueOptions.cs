@@ -1,5 +1,4 @@
 using System;
-using System.Text.Json;
 
 namespace Soenneker.Redis.WorkQueue;
 
@@ -30,6 +29,4 @@ public sealed class RedisWorkQueueOptions
 
     /// <summary>Whether registration adds the queue's background maintenance service.</summary>
     public bool EnableBackgroundMaintenance { get; set; } = true;
-
-    public JsonSerializerOptions? SerializerOptions { get; set; }
 }
