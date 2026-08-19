@@ -48,6 +48,6 @@
         <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
         <PackageReference Include="Soenneker.Redis.Semaphores" Version="4.0.11" />
         <PackageReference Include="Soenneker.Redis.Util" Version="4.0.5354" />
-        <PackageReference Include="Soenneker.Utils.Json" Version="4.0.2634" />
+        <PackageReference Include="Soenneker.Utils.Json" Version="4.0.2635" />
     </ItemGroup>
 </Project>
