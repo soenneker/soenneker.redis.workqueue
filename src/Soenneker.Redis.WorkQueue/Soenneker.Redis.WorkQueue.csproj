@@ -46,8 +46,8 @@
         <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.11" />
         <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.11" />
         <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
-        <PackageReference Include="Soenneker.Redis.Semaphores" Version="4.0.18" />
-        <PackageReference Include="Soenneker.Redis.Util" Version="4.0.5362" />
-        <PackageReference Include="Soenneker.Utils.Json" Version="4.0.2643" />
+        <PackageReference Include="Soenneker.Redis.Semaphores" Version="4.0.19" />
+        <PackageReference Include="Soenneker.Redis.Util" Version="4.0.5364" />
+        <PackageReference Include="Soenneker.Utils.Json" Version="4.0.2644" />
     </ItemGroup>
 </Project>
