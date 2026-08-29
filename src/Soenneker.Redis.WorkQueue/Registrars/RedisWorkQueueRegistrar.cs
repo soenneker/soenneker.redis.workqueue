@@ -12,7 +12,14 @@ namespace Soenneker.Redis.WorkQueue.Registrars;
 /// <summary>Registers durable Redis work queues and their Redis semaphore dependency.</summary>
 public static class RedisWorkQueueRegistrar
 {
-    /// <summary>Adds one typed Redis work queue as a singleton service.</summary>
+    /// <summary>
+    /// Adds one typed Redis work queue as a singleton service.
+    /// </summary>
+    /// <typeparam name="T">Type of value handled by the Redis Work Queue.</typeparam>
+    /// <param name="services">Service collection that receives the registration.</param>
+    /// <param name="queueName">Name of the queue to target.</param>
+    /// <param name="configure">Callback that adds conditions and operations to the Redis transaction.</param>
+    /// <returns>The same service collection, so additional registrations can be chained.</returns>
     public static IServiceCollection AddRedisWorkQueueAsSingleton<T>(this IServiceCollection services, string queueName,
         Action<RedisWorkQueueOptions>? configure = null) where T : class
     {
@@ -26,7 +33,14 @@ public static class RedisWorkQueueRegistrar
         return services;
     }
 
-    /// <summary>Adds one typed Redis work queue as a scoped service.</summary>
+    /// <summary>
+    /// Adds one typed Redis work queue as a scoped service.
+    /// </summary>
+    /// <typeparam name="T">Type of value handled by the Redis Work Queue.</typeparam>
+    /// <param name="services">Service collection that receives the registration.</param>
+    /// <param name="queueName">Name of the queue to target.</param>
+    /// <param name="configure">Callback that adds conditions and operations to the Redis transaction.</param>
+    /// <returns>The same service collection, so additional registrations can be chained.</returns>
     public static IServiceCollection AddRedisWorkQueueAsScoped<T>(this IServiceCollection services, string queueName,
         Action<RedisWorkQueueOptions>? configure = null) where T : class
     {
