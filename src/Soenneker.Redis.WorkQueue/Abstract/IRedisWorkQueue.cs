@@ -12,17 +12,17 @@ public interface IRedisWorkQueue<T> where T : class
     /// <summary>
     /// Adds an item unless its identifier is already queued, processing, or recently completed.
     /// </summary>
-    /// <param name="item">Receives the entry when the key is found.</param>
+    /// <param name="item">The work item, stable identifier, and partition key to enqueue.</param>
     /// <param name="cancellationToken">Token used to cancel the operation.</param>
-    /// <returns>true if adds an item unless its identifier is already queued, processing, or recently completed; otherwise, false.</returns>
+    /// <returns><c>true</c> if the item was added; <c>false</c> if its identifier is already active or retained as completed.</returns>
     ValueTask<bool> Enqueue(RedisWorkQueueItem<T> item, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Claims the next available item. A claim is returned only after a permit from that partition's Redis semaphore is acquired.
     /// </summary>
-    /// <param name="ownerId">Identifier of the owner to target.</param>
+    /// <param name="ownerId">A diagnostic identifier for the worker acquiring the claim.</param>
     /// <param name="cancellationToken">Token used to cancel the operation.</param>
-    /// <returns>A task whose result is the requested redis Work Queue Claim.</returns>
+    /// <returns>An owned claim, or <c>null</c> when no eligible item and partition permit are available.</returns>
     ValueTask<RedisWorkQueueClaim<T>?> TryClaim(string ownerId, CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -30,7 +30,7 @@ public interface IRedisWorkQueue<T> where T : class
     /// </summary>
     /// <param name="claim">Owned queue claim to complete, retry, or abandon.</param>
     /// <param name="cancellationToken">Token used to cancel the operation.</param>
-    /// <returns>true if completes an owned claim and records its identifier for deduplication; otherwise, false.</returns>
+    /// <returns><c>true</c> if the still-owned claim was completed; otherwise, <c>false</c>.</returns>
     ValueTask<bool> Complete(RedisWorkQueueClaim<T> claim, CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -57,7 +57,7 @@ public interface IRedisWorkQueue<T> where T : class
     /// <param name="failure">Failure for the retry operation.</param>
     /// <param name="delay">Delay to apply before continuing.</param>
     /// <param name="cancellationToken">Token used to cancel the operation.</param>
-    /// <returns>true if retries a claim while recording failure metadata. Claims at the configured attempt limit are dead-lettered; otherwise, false.</returns>
+    /// <returns><c>true</c> if the still-owned claim was retried or dead-lettered; otherwise, <c>false</c>.</returns>
     ValueTask<bool> Retry(RedisWorkQueueClaim<T> claim, RedisWorkQueueFailure failure, TimeSpan? delay = null,
         CancellationToken cancellationToken = default);
 
@@ -67,7 +67,7 @@ public interface IRedisWorkQueue<T> where T : class
     /// <param name="claim">Owned queue claim to complete, retry, or abandon.</param>
     /// <param name="failure">Failure for the dead letter operation.</param>
     /// <param name="cancellationToken">Token used to cancel the operation.</param>
-    /// <returns>true if moves an owned claim to the dead-letter store; otherwise, false.</returns>
+    /// <returns><c>true</c> if the still-owned claim was moved; otherwise, <c>false</c>.</returns>
     ValueTask<bool> DeadLetter(RedisWorkQueueClaim<T> claim, RedisWorkQueueFailure failure,
         CancellationToken cancellationToken = default);
 
@@ -76,7 +76,7 @@ public interface IRedisWorkQueue<T> where T : class
     /// </summary>
     /// <param name="itemId">Identifier of the item to target.</param>
     /// <param name="cancellationToken">Token used to cancel the operation.</param>
-    /// <returns>A task whose result is the requested redis Work Queue Dead Letter.</returns>
+    /// <returns>The dead-letter record, or <c>null</c> when it does not exist or cannot be read.</returns>
     ValueTask<RedisWorkQueueDeadLetter<T>?> GetDeadLetter(string itemId, CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -84,13 +84,13 @@ public interface IRedisWorkQueue<T> where T : class
     /// </summary>
     /// <param name="itemId">Identifier of the item to target.</param>
     /// <param name="cancellationToken">Token used to cancel the operation.</param>
-    /// <returns>true if moves a valid dead-letter item back to the end of its partition queue; otherwise, false.</returns>
+    /// <returns><c>true</c> if the record was moved; otherwise, <c>false</c>.</returns>
     ValueTask<bool> RequeueDeadLetter(string itemId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Moves due scheduled work and expired claims back into their partition queues.
     /// </summary>
     /// <param name="cancellationToken">Token used to cancel the operation.</param>
-    /// <returns>A task whose result is the requested redis Work Queue Maintenance Result.</returns>
+    /// <returns>Counts for each maintenance action completed by this run.</returns>
     ValueTask<RedisWorkQueueMaintenanceResult> RunMaintenance(CancellationToken cancellationToken = default);
 }

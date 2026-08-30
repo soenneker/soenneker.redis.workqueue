@@ -1,9 +1,12 @@
 [![](https://img.shields.io/nuget/v/soenneker.redis.workqueue.svg?style=for-the-badge)](https://www.nuget.org/packages/soenneker.redis.workqueue/)
 [![](https://img.shields.io/github/actions/workflow/status/soenneker/soenneker.redis.workqueue/publish-package.yml?style=for-the-badge)](https://github.com/soenneker/soenneker.redis.workqueue/actions/workflows/publish-package.yml)
 [![](https://img.shields.io/nuget/dt/soenneker.redis.workqueue.svg?style=for-the-badge)](https://www.nuget.org/packages/soenneker.redis.workqueue/)
+[![](https://img.shields.io/github/actions/workflow/status/soenneker/soenneker.redis.workqueue/build-and-test.yml?label=build%20and%20test&style=for-the-badge)](https://github.com/soenneker/soenneker.redis.workqueue/actions/workflows/build-and-test.yml)
+[![](https://img.shields.io/github/actions/workflow/status/soenneker/soenneker.redis.workqueue/codeql.yml?label=CodeQL&style=for-the-badge)](https://github.com/soenneker/soenneker.redis.workqueue/actions/workflows/codeql.yml)
 
-# ![](https://user-images.githubusercontent.com/4441470/224455560-91ed3ee7-f510-4041-a8d2-3fc093025112.png) Soenneker.Redis.WorkQueue
-### A durable, partition-aware Redis work queue with scheduling, leases, retries, deduplication, and round-robin fairness.
+# Soenneker.Redis.WorkQueue
+
+A durable, partition-aware Redis work queue with scheduling, leases, retries, deduplication, and round-robin fairness.
 
 ## Installation
 
@@ -24,6 +27,8 @@ services.AddRedisWorkQueueAsSingleton<SendMessageWork>("send-message", options =
 ```
 
 Registration starts a background maintenance service by default. Every process may register it; a distributed Redis semaphore ensures that only one process maintains a logical queue at a time. Set `EnableBackgroundMaintenance` to `false` only when another component calls `RunMaintenance` periodically.
+
+`AddRedisWorkQueueAsScoped<T>()` scopes the queue and semaphore wrappers while retaining the shared Redis client transport. Disposing a scope does not close the application's Redis connection.
 
 The partition key is the fairness and concurrency boundary. In Leadping, for example, use the business ID. Ready partitions are dispatched round-robin, and `Soenneker.Redis.Semaphores` prevents more than the configured number of claims for one partition across every process.
 
