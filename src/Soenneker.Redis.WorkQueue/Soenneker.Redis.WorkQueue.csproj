@@ -49,5 +49,7 @@
         <PackageReference Include="Soenneker.Redis.Semaphores" Version="4.0.33" />
         <PackageReference Include="Soenneker.Redis.Util" Version="4.0.5391" />
         <PackageReference Include="Soenneker.Utils.Json" Version="4.0.2669" />
+        <PackageReference Include="Soenneker.Extensions.Task" Version="4.0.128" />
+        <PackageReference Include="Soenneker.Extensions.ValueTask" Version="4.0.120" />
     </ItemGroup>
 </Project>

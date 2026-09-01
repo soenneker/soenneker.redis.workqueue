@@ -1,3 +1,5 @@
+using Soenneker.Extensions.ValueTask;
+using Soenneker.Extensions.Task;
 using System;
 using System.Collections.Generic;
 using System.Security.Cryptography;
@@ -90,10 +92,10 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
                 _ = transaction.SortedSetAddAsync(_scheduledKey, item.Id, ToScore(item.AvailableAt!.Value));
             else
                 _ = transaction.ListRightPushAsync(partitionQueueKey, item.Id);
-        }, cancellationToken).ConfigureAwait(false);
+        }, cancellationToken).NoSync();
 
         if (added && !scheduled)
-            await EnsurePartitionReady(item.PartitionKey, cancellationToken).ConfigureAwait(false);
+            await EnsurePartitionReady(item.PartitionKey, cancellationToken).NoSync();
 
         return added;
     }
@@ -102,31 +104,31 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(ownerId);
 
-        long readyCount = await _redis.GetListLength(_readyPartitionsKey, cancellationToken).ConfigureAwait(false) ?? 0;
+        long readyCount = await _redis.GetListLength(_readyPartitionsKey, cancellationToken).NoSync() ?? 0;
         int scans = (int) Math.Min(readyCount, _options.PartitionScanLimit);
 
         for (var index = 0; index < scans; index++)
         {
-            string? partitionKey = await PopReadyPartition(cancellationToken).ConfigureAwait(false);
+            string? partitionKey = await PopReadyPartition(cancellationToken).NoSync();
 
             if (partitionKey is null)
                 return null;
 
             RedisSemaphoreHandle? permit = await _semaphore.TryAcquire(GetSemaphoreName(partitionKey),
-                _options.MaxConcurrentItemsPerPartition, _semaphoreOptions, cancellationToken).ConfigureAwait(false);
+                _options.MaxConcurrentItemsPerPartition, _semaphoreOptions, cancellationToken).NoSync();
 
             if (permit is null)
             {
-                await EnsurePartitionReady(partitionKey, cancellationToken).ConfigureAwait(false);
+                await EnsurePartitionReady(partitionKey, cancellationToken).NoSync();
                 continue;
             }
 
-            RedisWorkQueueClaim<T>? claim = await TryClaimFromPartition(partitionKey, ownerId, permit, cancellationToken).ConfigureAwait(false);
+            RedisWorkQueueClaim<T>? claim = await TryClaimFromPartition(partitionKey, ownerId, permit, cancellationToken).NoSync();
 
             if (claim is not null)
                 return claim;
 
-            await permit.DisposeAsync().ConfigureAwait(false);
+            await permit.DisposeAsync().NoSync();
         }
 
         return null;
@@ -148,7 +150,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
             _ = transaction.HashDeleteAsync(_partitionsKey, claim.Item.Id);
             _ = transaction.HashDeleteAsync(_attemptsKey, claim.Item.Id);
             _ = transaction.SortedSetAddAsync(_completedKey, claim.Item.Id, ToScore(DateTimeOffset.UtcNow));
-        }, cancellationToken).ConfigureAwait(false);
+        }, cancellationToken).NoSync();
 
         if (!completed)
         {
@@ -156,7 +158,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
             return false;
         }
 
-        await claim.DisposeAsync().ConfigureAwait(false);
+        await claim.DisposeAsync().NoSync();
         return true;
     }
 
@@ -185,7 +187,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
                 Reason = "MaximumAttemptsExceeded",
                 Details = $"The item reached the configured maximum of {maximumAttempts} attempts."
             };
-            return await DeadLetter(claim, terminalFailure, cancellationToken).ConfigureAwait(false);
+            return await DeadLetter(claim, terminalFailure, cancellationToken).NoSync();
         }
 
         TimeSpan retryDelay = delay ?? _options.DefaultRetryDelay;
@@ -210,7 +212,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
                 _ = transaction.ListRightPushAsync(partitionQueueKey, claim.Item.Id);
             else
                 _ = transaction.SortedSetAddAsync(_scheduledKey, claim.Item.Id, ToScore(availableAt));
-        }, cancellationToken).ConfigureAwait(false);
+        }, cancellationToken).NoSync();
 
         if (!retried)
         {
@@ -219,9 +221,9 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
         }
 
         if (retryImmediately)
-            await EnsurePartitionReady(claim.Item.PartitionKey, cancellationToken).ConfigureAwait(false);
+            await EnsurePartitionReady(claim.Item.PartitionKey, cancellationToken).NoSync();
 
-        await claim.DisposeAsync().ConfigureAwait(false);
+        await claim.DisposeAsync().NoSync();
         return true;
     }
 
@@ -255,7 +257,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
             _ = transaction.HashDeleteAsync(_partitionsKey, claim.Item.Id);
             _ = transaction.HashDeleteAsync(_attemptsKey, claim.Item.Id);
             _ = transaction.HashSetAsync(_deadLettersKey, claim.Item.Id, serialized);
-        }, cancellationToken).ConfigureAwait(false);
+        }, cancellationToken).NoSync();
 
         if (!moved)
         {
@@ -263,14 +265,14 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
             return false;
         }
 
-        await claim.DisposeAsync().ConfigureAwait(false);
+        await claim.DisposeAsync().NoSync();
         return true;
     }
 
     public async ValueTask<RedisWorkQueueDeadLetter<T>?> GetDeadLetter(string itemId, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(itemId);
-        string? serialized = await _redis.GetHash(_deadLettersKey, itemId, cancellationToken).ConfigureAwait(false);
+        string? serialized = await _redis.GetHash(_deadLettersKey, itemId, cancellationToken).NoSync();
 
         if (serialized is null)
             return null;
@@ -289,7 +291,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
     public async ValueTask<bool> RequeueDeadLetter(string itemId, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(itemId);
-        RedisWorkQueueDeadLetter<T>? deadLetter = await GetDeadLetter(itemId, cancellationToken).ConfigureAwait(false);
+        RedisWorkQueueDeadLetter<T>? deadLetter = await GetDeadLetter(itemId, cancellationToken).NoSync();
 
         if (deadLetter?.Item is null)
             return false;
@@ -308,10 +310,10 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
             _ = transaction.HashDeleteAsync(_attemptsKey, itemId);
             _ = transaction.SetAddAsync(_knownPartitionsKey, item.PartitionKey);
             _ = transaction.ListRightPushAsync(GetPartitionQueueKey(item.PartitionKey), itemId);
-        }, cancellationToken).ConfigureAwait(false);
+        }, cancellationToken).NoSync();
 
         if (moved)
-            await EnsurePartitionReady(item.PartitionKey, cancellationToken).ConfigureAwait(false);
+            await EnsurePartitionReady(item.PartitionKey, cancellationToken).NoSync();
 
         return moved;
     }
@@ -319,17 +321,17 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
     public async ValueTask<RedisWorkQueueMaintenanceResult> RunMaintenance(CancellationToken cancellationToken = default)
     {
         RedisSemaphoreHandle? maintenancePermit = await _semaphore.TryAcquire(GetMaintenanceSemaphoreName(), 1,
-            _semaphoreOptions, cancellationToken).ConfigureAwait(false);
+            _semaphoreOptions, cancellationToken).NoSync();
 
         if (maintenancePermit is null)
             return new RedisWorkQueueMaintenanceResult();
 
         await using (maintenancePermit.ConfigureAwait(false))
         {
-            int promoted = await PromoteScheduled(cancellationToken).ConfigureAwait(false);
-            int recovered = await RecoverExpired(cancellationToken).ConfigureAwait(false);
-            int repaired = await RepairReadyPartitions(cancellationToken).ConfigureAwait(false);
-            int removed = await RemoveExpiredCompletedMarkers(cancellationToken).ConfigureAwait(false);
+            int promoted = await PromoteScheduled(cancellationToken).NoSync();
+            int recovered = await RecoverExpired(cancellationToken).NoSync();
+            int repaired = await RepairReadyPartitions(cancellationToken).NoSync();
+            int removed = await RemoveExpiredCompletedMarkers(cancellationToken).NoSync();
 
             return new RedisWorkQueueMaintenanceResult
             {
@@ -345,12 +347,12 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
         RedisSemaphoreHandle permit, CancellationToken cancellationToken)
     {
         string partitionQueueKey = GetPartitionQueueKey(partitionKey);
-        string? itemId = await _redis.GetListValue(partitionQueueKey, 0, cancellationToken).ConfigureAwait(false);
+        string? itemId = await _redis.GetListValue(partitionQueueKey, 0, cancellationToken).NoSync();
 
         if (itemId is null)
             return null;
 
-        string? serialized = await _redis.GetHash(_itemsKey, itemId, cancellationToken).ConfigureAwait(false);
+        string? serialized = await _redis.GetHash(_itemsKey, itemId, cancellationToken).NoSync();
         RedisWorkQueueItem<T>? item = null;
         Exception? deserializationException = null;
 
@@ -371,7 +373,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
             _logger.LogError(deserializationException, "Dead-lettering unreadable Redis work queue item {ItemId} in queue {QueueName}", itemId,
                 _options.QueueName);
             await MovePoisonItemToDeadLetter(partitionKey, partitionQueueKey, itemId, serialized, deserializationException, cancellationToken)
-                .ConfigureAwait(false);
+                .NoSync();
             return null;
         }
 
@@ -387,13 +389,13 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
             _ = transaction.HashSetAsync(_ownersKey, itemId, claimToken);
             _ = transaction.SortedSetAddAsync(_leasesKey, itemId, ToScore(leaseExpiresAt));
             attemptTask = transaction.HashIncrementAsync(_attemptsKey, itemId);
-        }, cancellationToken).ConfigureAwait(false);
+        }, cancellationToken).NoSync();
 
         if (!claimed)
             return null;
 
-        int attempt = checked((int) await attemptTask!.ConfigureAwait(false));
-        await EnsurePartitionReadyIfNeeded(partitionKey, cancellationToken).ConfigureAwait(false);
+        int attempt = checked((int) await attemptTask!.NoSync());
+        await EnsurePartitionReadyIfNeeded(partitionKey, cancellationToken).NoSync();
 
         if (_options.MaximumAttempts is { } maximumAttempts && attempt > maximumAttempts)
         {
@@ -401,7 +403,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
             {
                 Reason = "MaximumAttemptsExceeded",
                 Details = $"The item exceeded the configured maximum of {maximumAttempts} attempts after an abandoned or expired claim."
-            }, cancellationToken).ConfigureAwait(false);
+            }, cancellationToken).NoSync();
             return null;
         }
 
@@ -410,7 +412,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
             async token =>
             {
                 DateTimeOffset nextExpiration = DateTimeOffset.UtcNow + _options.ClaimLeaseDuration;
-                bool renewed = await RenewClaim(itemId, claimToken, nextExpiration, token).ConfigureAwait(false);
+                bool renewed = await RenewClaim(itemId, claimToken, nextExpiration, token).NoSync();
 
                 if (renewed && claim is not null)
                     claim.LeaseExpiresAt = nextExpiration;
@@ -447,10 +449,10 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
             _ = transaction.HashDeleteAsync(_attemptsKey, itemId);
             _ = transaction.SortedSetRemoveAsync(_scheduledKey, itemId);
             _ = transaction.HashSetAsync(_deadLettersKey, itemId, serializedDeadLetter);
-        }, cancellationToken).ConfigureAwait(false);
+        }, cancellationToken).NoSync();
 
         if (moved)
-            await EnsurePartitionReadyIfNeeded(partitionKey, cancellationToken).ConfigureAwait(false);
+            await EnsurePartitionReadyIfNeeded(partitionKey, cancellationToken).NoSync();
     }
 
     private async ValueTask<bool> MoveOwnedItemToDeadLetter(RedisWorkQueueItem<T> item, string itemId, string claimToken, int attempt,
@@ -476,7 +478,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
             _ = transaction.HashDeleteAsync(_partitionsKey, itemId);
             _ = transaction.HashDeleteAsync(_attemptsKey, itemId);
             _ = transaction.HashSetAsync(_deadLettersKey, itemId, serialized);
-        }, cancellationToken).ConfigureAwait(false);
+        }, cancellationToken).NoSync();
     }
 
     private ValueTask<bool> RenewClaim(string itemId, string claimToken, DateTimeOffset leaseExpiresAt, CancellationToken cancellationToken) =>
@@ -489,7 +491,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
     private async ValueTask<int> PromoteScheduled(CancellationToken cancellationToken)
     {
         IReadOnlyList<string>? due = await _redis.GetSortedSetValuesByScore(_scheduledKey, maximumScore: ToScore(DateTimeOffset.UtcNow),
-            take: _options.MaintenanceBatchSize, cancellationToken: cancellationToken).ConfigureAwait(false);
+            take: _options.MaintenanceBatchSize, cancellationToken: cancellationToken).NoSync();
 
         if (due is null)
             return 0;
@@ -498,8 +500,8 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
 
         foreach (string itemId in due)
         {
-            double? score = await _redis.GetSortedSetScore(_scheduledKey, itemId, cancellationToken).ConfigureAwait(false);
-            string? partitionKey = await _redis.GetHash(_partitionsKey, itemId, cancellationToken).ConfigureAwait(false);
+            double? score = await _redis.GetSortedSetScore(_scheduledKey, itemId, cancellationToken).NoSync();
+            string? partitionKey = await _redis.GetHash(_partitionsKey, itemId, cancellationToken).NoSync();
 
             if (score is null || partitionKey is null)
                 continue;
@@ -509,12 +511,12 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
                 transaction.AddCondition(Condition.SortedSetEqual(_scheduledKey, itemId, score.Value));
                 _ = transaction.SortedSetRemoveAsync(_scheduledKey, itemId);
                 _ = transaction.ListRightPushAsync(GetPartitionQueueKey(partitionKey), itemId);
-            }, cancellationToken).ConfigureAwait(false);
+            }, cancellationToken).NoSync();
 
             if (!moved)
                 continue;
 
-            await EnsurePartitionReady(partitionKey, cancellationToken).ConfigureAwait(false);
+            await EnsurePartitionReady(partitionKey, cancellationToken).NoSync();
             promoted++;
         }
 
@@ -524,7 +526,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
     private async ValueTask<int> RecoverExpired(CancellationToken cancellationToken)
     {
         IReadOnlyList<string>? expired = await _redis.GetSortedSetValuesByScore(_leasesKey, maximumScore: ToScore(DateTimeOffset.UtcNow),
-            take: _options.MaintenanceBatchSize, cancellationToken: cancellationToken).ConfigureAwait(false);
+            take: _options.MaintenanceBatchSize, cancellationToken: cancellationToken).NoSync();
 
         if (expired is null)
             return 0;
@@ -533,8 +535,8 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
 
         foreach (string itemId in expired)
         {
-            double? score = await _redis.GetSortedSetScore(_leasesKey, itemId, cancellationToken).ConfigureAwait(false);
-            string? partitionKey = await _redis.GetHash(_partitionsKey, itemId, cancellationToken).ConfigureAwait(false);
+            double? score = await _redis.GetSortedSetScore(_leasesKey, itemId, cancellationToken).NoSync();
+            string? partitionKey = await _redis.GetHash(_partitionsKey, itemId, cancellationToken).NoSync();
 
             if (score is null || partitionKey is null)
                 continue;
@@ -545,12 +547,12 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
                 _ = transaction.SortedSetRemoveAsync(_leasesKey, itemId);
                 _ = transaction.HashDeleteAsync(_ownersKey, itemId);
                 _ = transaction.ListRightPushAsync(GetPartitionQueueKey(partitionKey), itemId);
-            }, cancellationToken).ConfigureAwait(false);
+            }, cancellationToken).NoSync();
 
             if (!moved)
                 continue;
 
-            await EnsurePartitionReady(partitionKey, cancellationToken).ConfigureAwait(false);
+            await EnsurePartitionReady(partitionKey, cancellationToken).NoSync();
             recovered++;
         }
 
@@ -559,7 +561,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
 
     private async ValueTask<int> RepairReadyPartitions(CancellationToken cancellationToken)
     {
-        IReadOnlyList<string>? partitions = await _redis.GetSetValues(_knownPartitionsKey, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<string>? partitions = await _redis.GetSetValues(_knownPartitionsKey, cancellationToken).NoSync();
 
         if (partitions is null)
             return 0;
@@ -568,7 +570,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
 
         foreach (string partition in partitions)
         {
-            if (await EnsurePartitionReadyIfNeeded(partition, cancellationToken).ConfigureAwait(false))
+            if (await EnsurePartitionReadyIfNeeded(partition, cancellationToken).NoSync())
                 repaired++;
         }
 
@@ -579,7 +581,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
     {
         double maximumScore = ToScore(DateTimeOffset.UtcNow - _options.CompletedItemRetention);
         IReadOnlyList<string>? expired = await _redis.GetSortedSetValuesByScore(_completedKey, maximumScore: maximumScore,
-            take: _options.MaintenanceBatchSize, cancellationToken: cancellationToken).ConfigureAwait(false);
+            take: _options.MaintenanceBatchSize, cancellationToken: cancellationToken).NoSync();
 
         if (expired is null)
             return 0;
@@ -588,7 +590,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
 
         foreach (string itemId in expired)
         {
-            if (await _redis.RemoveSortedSetValue(_completedKey, itemId, cancellationToken).ConfigureAwait(false))
+            if (await _redis.RemoveSortedSetValue(_completedKey, itemId, cancellationToken).NoSync())
                 removed++;
         }
 
@@ -597,7 +599,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
 
     private async ValueTask<string?> PopReadyPartition(CancellationToken cancellationToken)
     {
-        string? partitionKey = await _redis.GetListValue(_readyPartitionsKey, 0, cancellationToken).ConfigureAwait(false);
+        string? partitionKey = await _redis.GetListValue(_readyPartitionsKey, 0, cancellationToken).NoSync();
 
         if (partitionKey is null)
             return null;
@@ -607,15 +609,15 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
             transaction.AddCondition(Condition.ListIndexEqual(_readyPartitionsKey, 0, partitionKey));
             _ = transaction.ListLeftPopAsync(_readyPartitionsKey);
             _ = transaction.SetRemoveAsync(_readyPartitionSetKey, partitionKey);
-        }, cancellationToken).ConfigureAwait(false);
+        }, cancellationToken).NoSync();
 
         return popped ? partitionKey : null;
     }
 
     private async ValueTask<bool> EnsurePartitionReadyIfNeeded(string partitionKey, CancellationToken cancellationToken)
     {
-        long length = await _redis.GetListLength(GetPartitionQueueKey(partitionKey), cancellationToken).ConfigureAwait(false) ?? 0;
-        return length > 0 && await EnsurePartitionReady(partitionKey, cancellationToken).ConfigureAwait(false);
+        long length = await _redis.GetListLength(GetPartitionQueueKey(partitionKey), cancellationToken).NoSync() ?? 0;
+        return length > 0 && await EnsurePartitionReady(partitionKey, cancellationToken).NoSync();
     }
 
     private ValueTask<bool> EnsurePartitionReady(string partitionKey, CancellationToken cancellationToken) =>

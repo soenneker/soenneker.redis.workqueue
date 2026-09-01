@@ -1,3 +1,5 @@
+using Soenneker.Extensions.ValueTask;
+using Soenneker.Extensions.Task;
 using System;
 using System.Threading;
 using System.Threading.Tasks;
@@ -30,7 +32,7 @@ internal sealed class RedisWorkQueueMaintenanceService<T> : BackgroundService wh
         {
             try
             {
-                await RunMaintenance(stoppingToken).ConfigureAwait(false);
+                await RunMaintenance(stoppingToken).NoSync();
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -41,7 +43,7 @@ internal sealed class RedisWorkQueueMaintenanceService<T> : BackgroundService wh
                 _logger.LogError(exception, "Redis work queue maintenance failed for {QueueName}", _registration.Options.QueueName);
             }
 
-            if (!await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
+            if (!await timer.WaitForNextTickAsync(stoppingToken).NoSync())
                 return;
         }
     }
@@ -50,6 +52,6 @@ internal sealed class RedisWorkQueueMaintenanceService<T> : BackgroundService wh
     {
         await using AsyncServiceScope scope = _scopeFactory.CreateAsyncScope();
         IRedisWorkQueue<T> queue = scope.ServiceProvider.GetRequiredService<IRedisWorkQueue<T>>();
-        await queue.RunMaintenance(cancellationToken).ConfigureAwait(false);
+        await queue.RunMaintenance(cancellationToken).NoSync();
     }
 }

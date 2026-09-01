@@ -1,3 +1,5 @@
+using Soenneker.Extensions.ValueTask;
+using Soenneker.Extensions.Task;
 using System;
 using System.Threading;
 using System.Threading.Tasks;
@@ -60,9 +62,9 @@ public sealed class RedisWorkQueueClaim<T> : IAsyncDisposable where T : class
         {
             using var timer = new PeriodicTimer(_renewalInterval);
 
-            while (await timer.WaitForNextTickAsync(_renewalCancellation.Token).ConfigureAwait(false))
+            while (await timer.WaitForNextTickAsync(_renewalCancellation.Token).NoSync())
             {
-                if (await _renew(_renewalCancellation.Token).ConfigureAwait(false))
+                if (await _renew(_renewalCancellation.Token).NoSync())
                     continue;
 
                 _leaseLostCancellation.Cancel();
@@ -83,12 +85,12 @@ public sealed class RedisWorkQueueClaim<T> : IAsyncDisposable where T : class
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
 
-        await _renewalCancellation.CancelAsync().ConfigureAwait(false);
+        await _renewalCancellation.CancelAsync().NoSync();
 
         if (_renewalTask is not null)
-            await _renewalTask.ConfigureAwait(false);
+            await _renewalTask.NoSync();
 
-        await _semaphoreHandle.DisposeAsync().ConfigureAwait(false);
+        await _semaphoreHandle.DisposeAsync().NoSync();
         _leaseLostCancellation.Dispose();
         _renewalCancellation.Dispose();
     }
