@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AwesomeAssertions;
 using Soenneker.Redis.WorkQueue.Abstract;
+using Soenneker.Hashing.Sha256;
 using Soenneker.Redis.Util.Abstract;
 using Soenneker.Tests.HostedUnit;
 
@@ -14,6 +15,8 @@ namespace Soenneker.Redis.WorkQueue.Tests;
 [NotInParallel]
 public sealed class RedisWorkQueueTests : HostedUnitTest
 {
+    private static readonly Sha256HashingUtil _sha256 = new();
+
     private readonly IRedisWorkQueue<TestWork> _queue;
     private readonly IRedisUtil _redis;
 
@@ -207,8 +210,7 @@ public sealed class RedisWorkQueueTests : HostedUnitTest
 
     private static string GetItemsKey()
     {
-        string queueTag = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(global::Soenneker.Redis.WorkQueue.Tests.Host.QueueName)))
-                                 .ToLowerInvariant()[..24];
+        string queueTag = _sha256.Hash(global::Soenneker.Redis.WorkQueue.Tests.Host.QueueName)[..24];
         return $"workqueue:{{{queueTag}}}:items";
     }
 }

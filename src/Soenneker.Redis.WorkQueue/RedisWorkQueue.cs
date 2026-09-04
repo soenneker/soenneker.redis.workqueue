@@ -2,8 +2,6 @@ using Soenneker.Extensions.ValueTask;
 using Soenneker.Extensions.Task;
 using System;
 using System.Collections.Generic;
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -12,6 +10,7 @@ using Soenneker.Redis.Semaphores;
 using Soenneker.Redis.Semaphores.Abstract;
 using Soenneker.Redis.Util.Abstract;
 using Soenneker.Redis.WorkQueue.Abstract;
+using Soenneker.Hashing.Sha256;
 using Soenneker.Utils.Json;
 using StackExchange.Redis;
 
@@ -20,6 +19,8 @@ namespace Soenneker.Redis.WorkQueue;
 /// <inheritdoc cref="IRedisWorkQueue{T}"/>
 public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
 {
+    private static readonly Sha256HashingUtil _sha256 = new();
+
     private readonly IRedisUtil _redis;
     private readonly IRedisSemaphore _semaphore;
     private readonly ILogger<RedisWorkQueue<T>> _logger;
@@ -47,7 +48,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
         _options = Validate(options);
         _renewalInterval = options.ClaimRenewalInterval ?? TimeSpan.FromTicks(options.ClaimLeaseDuration.Ticks / 3);
 
-        string queueTag = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(options.QueueName))).ToLowerInvariant()[..24];
+        string queueTag = _sha256.Hash(options.QueueName)[..24];
         _prefix = $"workqueue:{{{queueTag}}}";
         _itemsKey = $"{_prefix}:items";
         _partitionsKey = $"{_prefix}:partitions";
@@ -634,7 +635,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
 
     private string GetMaintenanceSemaphoreName() => $"workqueue:{Hash(_options.QueueName)}:maintenance";
 
-    private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant()[..24];
+    private static string Hash(string value) => _sha256.Hash(value)[..24];
 
     private static double ToScore(DateTimeOffset value) => value.ToUnixTimeMilliseconds();
 
