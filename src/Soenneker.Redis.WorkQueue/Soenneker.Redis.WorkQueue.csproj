@@ -44,6 +44,6 @@
 
     <ItemGroup>
         <PackageReference Include="Soenneker.Hashing.Sha256" Version="4.0.1" />
-        <PackageReference Include="Soenneker.Redis.Semaphores" Version="4.0.45" />
+        <PackageReference Include="Soenneker.Redis.Semaphores" Version="4.0.46" />
     </ItemGroup>
 </Project>
