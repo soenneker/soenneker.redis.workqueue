@@ -30,7 +30,7 @@ Registration starts a background maintenance service by default. Every process m
 
 `AddRedisWorkQueueAsScoped<T>()` scopes the queue and semaphore wrappers while retaining the shared Redis client transport. Disposing a scope does not close the application's Redis connection.
 
-The partition key is the fairness and concurrency boundary. In Leadping, for example, use the business ID. Ready partitions are dispatched round-robin, and `Soenneker.Redis.Semaphores` prevents more than the configured number of claims for one partition across every process.
+The partition key is the fairness and concurrency boundary. For a multi-tenant application, for example, use the business ID. Ready partitions are dispatched round-robin, and `Soenneker.Redis.Semaphores` prevents more than the configured number of claims for one partition across every process.
 
 ## Enqueue and process
 
