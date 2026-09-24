@@ -27,4 +27,7 @@
         <ProjectReference Include="..\..\src\Soenneker.Redis.WorkQueue\Soenneker.Redis.WorkQueue.csproj" />
     </ItemGroup>
 
+    <ItemGroup>
+        <PackageReference Include="AwesomeAssertions" Version="9.6.0" />
+    </ItemGroup>
 </Project>
