@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using Soenneker.Extensions.ValueTask;
 using Soenneker.Extensions.Task;
 using System;
@@ -16,9 +18,13 @@ using StackExchange.Redis;
 
 namespace Soenneker.Redis.WorkQueue;
 
-/// <inheritdoc cref="IRedisWorkQueue{T}"/>
 public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
 {
+    private readonly JsonSerializerContext _jsonContext;
+
+    private JsonTypeInfo<TJson> GetJsonTypeInfo<TJson>() =>
+        (JsonTypeInfo<TJson>)(_jsonContext.GetTypeInfo(typeof(TJson)) ?? throw new System.NotSupportedException($"No generated JSON metadata for {typeof(TJson)}."));
+
     private static readonly Sha256HashingUtil _sha256 = new();
 
     private readonly IRedisUtil _redis;
@@ -40,8 +46,9 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
     private readonly TimeSpan _renewalInterval;
     private readonly RedisSemaphoreOptions _semaphoreOptions;
 
-    public RedisWorkQueue(IRedisUtil redis, IRedisSemaphore semaphore, ILogger<RedisWorkQueue<T>> logger, RedisWorkQueueOptions options)
+    public RedisWorkQueue(JsonSerializerContext jsonContext, IRedisUtil redis, IRedisSemaphore semaphore, ILogger<RedisWorkQueue<T>> logger, RedisWorkQueueOptions options)
     {
+        _jsonContext = jsonContext ?? throw new System.ArgumentNullException(nameof(jsonContext));
         _redis = redis;
         _semaphore = semaphore;
         _logger = logger;
@@ -77,7 +84,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
         bool scheduled = item.AvailableAt is { } availableAt && availableAt > now;
-        string serialized = JsonUtil.Serialize(item)!;
+        string serialized = JsonUtil.Serialize(item, GetJsonTypeInfo<RedisWorkQueueItem<T>>())!;
         string partitionQueueKey = GetPartitionQueueKey(item.PartitionKey);
 
         bool added = await _redis.ExecuteTransaction(transaction =>
@@ -246,7 +253,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
             Attempt = claim.Attempt,
             DeadLetteredAt = DateTimeOffset.UtcNow
         };
-        string serialized = JsonUtil.Serialize(deadLetter)!;
+        string serialized = JsonUtil.Serialize(deadLetter, GetJsonTypeInfo<RedisWorkQueueDeadLetter<T>>())!;
 
         bool moved = await _redis.ExecuteTransaction(transaction =>
         {
@@ -280,7 +287,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
 
         try
         {
-            return JsonUtil.Deserialize<RedisWorkQueueDeadLetter<T>>(serialized);
+            return JsonUtil.Deserialize<RedisWorkQueueDeadLetter<T>>(serialized, GetJsonTypeInfo<RedisWorkQueueDeadLetter<T>>());
         }
         catch (Exception exception) when (exception is JsonException or NotSupportedException)
         {
@@ -298,7 +305,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
             return false;
 
         RedisWorkQueueItem<T> item = deadLetter.Item;
-        string serializedItem = JsonUtil.Serialize(item)!;
+        string serializedItem = JsonUtil.Serialize(item, GetJsonTypeInfo<RedisWorkQueueItem<T>>())!;
 
         bool moved = await _redis.ExecuteTransaction(transaction =>
         {
@@ -361,7 +368,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
         {
             try
             {
-                item = JsonUtil.Deserialize<RedisWorkQueueItem<T>>(serialized);
+                item = JsonUtil.Deserialize<RedisWorkQueueItem<T>>(serialized, GetJsonTypeInfo<RedisWorkQueueItem<T>>());
             }
             catch (Exception exception) when (exception is JsonException or NotSupportedException)
             {
@@ -439,7 +446,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
             },
             DeadLetteredAt = DateTimeOffset.UtcNow
         };
-        string serializedDeadLetter = JsonUtil.Serialize(deadLetter)!;
+        string serializedDeadLetter = JsonUtil.Serialize(deadLetter, GetJsonTypeInfo<RedisWorkQueueDeadLetter<T>>())!;
 
         bool moved = await _redis.ExecuteTransaction(transaction =>
         {
@@ -468,7 +475,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
             Attempt = attempt,
             DeadLetteredAt = DateTimeOffset.UtcNow
         };
-        string serialized = JsonUtil.Serialize(deadLetter)!;
+        string serialized = JsonUtil.Serialize(deadLetter, GetJsonTypeInfo<RedisWorkQueueDeadLetter<T>>())!;
 
         return await _redis.ExecuteTransaction(transaction =>
         {

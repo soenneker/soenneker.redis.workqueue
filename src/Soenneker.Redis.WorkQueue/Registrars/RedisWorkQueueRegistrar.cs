@@ -26,7 +26,7 @@ public static class RedisWorkQueueRegistrar
         RedisWorkQueueOptions options = BuildOptions(queueName, configure);
         services.AddRedisSemaphoreAsSingleton();
         services.TryAddSingleton(new RedisWorkQueueRegistration<T>(options));
-        services.TryAddSingleton<IRedisWorkQueue<T>>(provider => new RedisWorkQueue<T>(provider.GetRequiredService<IRedisUtil>(),
+        services.TryAddSingleton<IRedisWorkQueue<T>>(provider => new RedisWorkQueue<T>(provider.GetRequiredService<System.Text.Json.Serialization.JsonSerializerContext>(), provider.GetRequiredService<IRedisUtil>(),
             provider.GetRequiredService<IRedisSemaphore>(), provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<RedisWorkQueue<T>>>(),
             provider.GetRequiredService<RedisWorkQueueRegistration<T>>().Options));
         AddMaintenanceService<T>(services, options);
@@ -47,7 +47,7 @@ public static class RedisWorkQueueRegistrar
         RedisWorkQueueOptions options = BuildOptions(queueName, configure);
         services.AddRedisSemaphoreAsScoped();
         services.TryAddSingleton(new RedisWorkQueueRegistration<T>(options));
-        services.TryAddScoped<IRedisWorkQueue<T>>(provider => new RedisWorkQueue<T>(provider.GetRequiredService<IRedisUtil>(),
+        services.TryAddScoped<IRedisWorkQueue<T>>(provider => new RedisWorkQueue<T>(provider.GetRequiredService<System.Text.Json.Serialization.JsonSerializerContext>(), provider.GetRequiredService<IRedisUtil>(),
             provider.GetRequiredService<IRedisSemaphore>(), provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<RedisWorkQueue<T>>>(),
             provider.GetRequiredService<RedisWorkQueueRegistration<T>>().Options));
         AddMaintenanceService<T>(services, options);

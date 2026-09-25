@@ -7,6 +7,7 @@ namespace Soenneker.Redis.WorkQueue.Abstract;
 /// <summary>
 /// A durable, partition-aware Redis work queue with round-robin fairness and distributed per-partition concurrency limits.
 /// </summary>
+/// <remarks>Register a source-generated JsonSerializerContext covering application payloads. JSON contracts are never discovered through reflection.</remarks>
 public interface IRedisWorkQueue<T> where T : class
 {
     /// <summary>
