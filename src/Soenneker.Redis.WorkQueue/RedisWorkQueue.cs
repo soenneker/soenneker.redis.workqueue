@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Serialization.Metadata;
 using Soenneker.Extensions.ValueTask;
 using Soenneker.Extensions.Task;
@@ -20,10 +21,19 @@ namespace Soenneker.Redis.WorkQueue;
 
 public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
 {
-    private readonly JsonSerializerContext _jsonContext;
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "The reflection entry points are annotated; context overloads use generated metadata.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "The reflection entry points are annotated; context overloads use generated metadata.")]
+    private static string? SerializePayload<TPayload>(TPayload payload, JsonSerializerContext? jsonContext) =>
+        jsonContext is null ? JsonUtil.Serialize(payload!) : JsonUtil.Serialize(payload, GetJsonTypeInfo<TPayload>(jsonContext));
 
-    private JsonTypeInfo<TJson> GetJsonTypeInfo<TJson>() =>
-        (JsonTypeInfo<TJson>)(_jsonContext.GetTypeInfo(typeof(TJson)) ?? throw new System.NotSupportedException($"No generated JSON metadata for {typeof(TJson)}."));
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "The reflection entry points are annotated; context overloads use generated metadata.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "The reflection entry points are annotated; context overloads use generated metadata.")]
+    private static TPayload? DeserializePayload<TPayload>(string payload, JsonSerializerContext? jsonContext) =>
+        jsonContext is null ? JsonUtil.Deserialize<TPayload>(payload) : JsonUtil.Deserialize(payload, GetJsonTypeInfo<TPayload>(jsonContext));
+
+    private static JsonTypeInfo<TPayload> GetJsonTypeInfo<TPayload>(JsonSerializerContext jsonContext) =>
+        (JsonTypeInfo<TPayload>)(jsonContext.GetTypeInfo(typeof(TPayload)) ??
+            throw new NotSupportedException($"No generated JSON metadata for {typeof(TPayload)}."));
 
     private static readonly Sha256HashingUtil _sha256 = new();
 
@@ -46,9 +56,8 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
     private readonly TimeSpan _renewalInterval;
     private readonly RedisSemaphoreOptions _semaphoreOptions;
 
-    public RedisWorkQueue(JsonSerializerContext jsonContext, IRedisUtil redis, IRedisSemaphore semaphore, ILogger<RedisWorkQueue<T>> logger, RedisWorkQueueOptions options)
+    public RedisWorkQueue(IRedisUtil redis, IRedisSemaphore semaphore, ILogger<RedisWorkQueue<T>> logger, RedisWorkQueueOptions options)
     {
-        _jsonContext = jsonContext ?? throw new System.ArgumentNullException(nameof(jsonContext));
         _redis = redis;
         _semaphore = semaphore;
         _logger = logger;
@@ -77,14 +86,27 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
         };
     }
 
-    public async ValueTask<bool> Enqueue(RedisWorkQueueItem<T> item, CancellationToken cancellationToken = default)
+    [RequiresUnreferencedCode("Reflection-based JSON serialization requires preserved payload types. Use the overload accepting JsonSerializerContext instead.")]
+    [RequiresDynamicCode("Reflection-based JSON serialization may require runtime code generation. Use the overload accepting JsonSerializerContext instead.")]
+    public ValueTask<bool> Enqueue(RedisWorkQueueItem<T> item, CancellationToken cancellationToken = default)
+    {
+        return EnqueueCore(null, item, cancellationToken);
+    }
+
+    public ValueTask<bool> Enqueue(RedisWorkQueueItem<T> item, JsonSerializerContext jsonContext, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(jsonContext);
+        return EnqueueCore(jsonContext, item, cancellationToken);
+    }
+
+    private async ValueTask<bool> EnqueueCore(JsonSerializerContext? jsonContext, RedisWorkQueueItem<T> item, CancellationToken cancellationToken = default)
     {
         ValidateItem(item);
         cancellationToken.ThrowIfCancellationRequested();
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
         bool scheduled = item.AvailableAt is { } availableAt && availableAt > now;
-        string serialized = JsonUtil.Serialize(item, GetJsonTypeInfo<RedisWorkQueueItem<T>>())!;
+        string serialized = SerializePayload(item, jsonContext)!;
         string partitionQueueKey = GetPartitionQueueKey(item.PartitionKey);
 
         bool added = await _redis.ExecuteTransaction(transaction =>
@@ -108,7 +130,20 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
         return added;
     }
 
-    public async ValueTask<RedisWorkQueueClaim<T>?> TryClaim(string ownerId, CancellationToken cancellationToken = default)
+    [RequiresUnreferencedCode("Reflection-based JSON serialization requires preserved payload types. Use the overload accepting JsonSerializerContext instead.")]
+    [RequiresDynamicCode("Reflection-based JSON serialization may require runtime code generation. Use the overload accepting JsonSerializerContext instead.")]
+    public ValueTask<RedisWorkQueueClaim<T>?> TryClaim(string ownerId, CancellationToken cancellationToken = default)
+    {
+        return TryClaimCore(null, ownerId, cancellationToken);
+    }
+
+    public ValueTask<RedisWorkQueueClaim<T>?> TryClaim(string ownerId, JsonSerializerContext jsonContext, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(jsonContext);
+        return TryClaimCore(jsonContext, ownerId, cancellationToken);
+    }
+
+    private async ValueTask<RedisWorkQueueClaim<T>?> TryClaimCore(JsonSerializerContext? jsonContext, string ownerId, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(ownerId);
 
@@ -131,7 +166,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
                 continue;
             }
 
-            RedisWorkQueueClaim<T>? claim = await TryClaimFromPartition(partitionKey, ownerId, permit, cancellationToken).NoSync();
+            RedisWorkQueueClaim<T>? claim = await TryClaimFromPartition(partitionKey, ownerId, permit, jsonContext, cancellationToken).NoSync();
 
             if (claim is not null)
                 return claim;
@@ -170,21 +205,48 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
         return true;
     }
 
-    public ValueTask<bool> Retry(RedisWorkQueueClaim<T> claim, TimeSpan? delay = null, CancellationToken cancellationToken = default) =>
-        RetryInternal(claim, null, delay, cancellationToken);
+    [RequiresUnreferencedCode("Reflection-based JSON serialization requires preserved payload types. Use the overload accepting JsonSerializerContext instead.")]
+    [RequiresDynamicCode("Reflection-based JSON serialization may require runtime code generation. Use the overload accepting JsonSerializerContext instead.")]
+    public ValueTask<bool> Retry(RedisWorkQueueClaim<T> claim, TimeSpan? delay = null, CancellationToken cancellationToken = default)
+    {
+        return RetryCore(null, claim, delay, cancellationToken);
+    }
 
+    public ValueTask<bool> Retry(RedisWorkQueueClaim<T> claim, JsonSerializerContext jsonContext, TimeSpan? delay = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(jsonContext);
+        return RetryCore(jsonContext, claim, delay, cancellationToken);
+    }
+
+    private ValueTask<bool> RetryCore(JsonSerializerContext? jsonContext, RedisWorkQueueClaim<T> claim, TimeSpan? delay = null, CancellationToken cancellationToken = default) =>
+        RetryInternal(claim, null, delay, jsonContext, cancellationToken);
+
+    [RequiresUnreferencedCode("Reflection-based JSON serialization requires preserved payload types. Use the overload accepting JsonSerializerContext instead.")]
+    [RequiresDynamicCode("Reflection-based JSON serialization may require runtime code generation. Use the overload accepting JsonSerializerContext instead.")]
     public ValueTask<bool> Retry(RedisWorkQueueClaim<T> claim, RedisWorkQueueFailure failure, TimeSpan? delay = null,
         CancellationToken cancellationToken = default)
     {
+        return RetryCore(null, claim, failure, delay, cancellationToken);
+    }
+
+    public ValueTask<bool> Retry(RedisWorkQueueClaim<T> claim, RedisWorkQueueFailure failure, JsonSerializerContext jsonContext, TimeSpan? delay = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(jsonContext);
+        return RetryCore(jsonContext, claim, failure, delay, cancellationToken);
+    }
+
+    private ValueTask<bool> RetryCore(JsonSerializerContext? jsonContext, RedisWorkQueueClaim<T> claim, RedisWorkQueueFailure failure, TimeSpan? delay = null,
+        CancellationToken cancellationToken = default)
+    {
         ArgumentNullException.ThrowIfNull(failure);
-        return RetryInternal(claim, failure, delay, cancellationToken);
+        return RetryInternal(claim, failure, delay, jsonContext, cancellationToken);
     }
 
     public ValueTask<bool> Abandon(RedisWorkQueueClaim<T> claim, CancellationToken cancellationToken = default) =>
-        RetryInternal(claim, null, TimeSpan.Zero, cancellationToken, enforceMaximumAttempts: false);
+        RetryInternal(claim, null, TimeSpan.Zero, null, cancellationToken, enforceMaximumAttempts: false);
 
     private async ValueTask<bool> RetryInternal(RedisWorkQueueClaim<T> claim, RedisWorkQueueFailure? failure, TimeSpan? delay,
-        CancellationToken cancellationToken, bool enforceMaximumAttempts = true)
+        JsonSerializerContext? jsonContext, CancellationToken cancellationToken, bool enforceMaximumAttempts = true)
     {
         ValidateClaim(claim);
 
@@ -195,7 +257,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
                 Reason = "MaximumAttemptsExceeded",
                 Details = $"The item reached the configured maximum of {maximumAttempts} attempts."
             };
-            return await DeadLetter(claim, terminalFailure, cancellationToken).NoSync();
+            return await DeadLetterCore(jsonContext, claim, terminalFailure, cancellationToken).NoSync();
         }
 
         TimeSpan retryDelay = delay ?? _options.DefaultRetryDelay;
@@ -235,7 +297,21 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
         return true;
     }
 
-    public async ValueTask<bool> DeadLetter(RedisWorkQueueClaim<T> claim, RedisWorkQueueFailure failure,
+    [RequiresUnreferencedCode("Reflection-based JSON serialization requires preserved payload types. Use the overload accepting JsonSerializerContext instead.")]
+    [RequiresDynamicCode("Reflection-based JSON serialization may require runtime code generation. Use the overload accepting JsonSerializerContext instead.")]
+    public ValueTask<bool> DeadLetter(RedisWorkQueueClaim<T> claim, RedisWorkQueueFailure failure,
+        CancellationToken cancellationToken = default)
+    {
+        return DeadLetterCore(null, claim, failure, cancellationToken);
+    }
+
+    public ValueTask<bool> DeadLetter(RedisWorkQueueClaim<T> claim, RedisWorkQueueFailure failure, JsonSerializerContext jsonContext, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(jsonContext);
+        return DeadLetterCore(jsonContext, claim, failure, cancellationToken);
+    }
+
+    private async ValueTask<bool> DeadLetterCore(JsonSerializerContext? jsonContext, RedisWorkQueueClaim<T> claim, RedisWorkQueueFailure failure,
         CancellationToken cancellationToken = default)
     {
         ValidateClaim(claim);
@@ -253,7 +329,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
             Attempt = claim.Attempt,
             DeadLetteredAt = DateTimeOffset.UtcNow
         };
-        string serialized = JsonUtil.Serialize(deadLetter, GetJsonTypeInfo<RedisWorkQueueDeadLetter<T>>())!;
+        string serialized = SerializePayload(deadLetter, jsonContext)!;
 
         bool moved = await _redis.ExecuteTransaction(transaction =>
         {
@@ -277,7 +353,20 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
         return true;
     }
 
-    public async ValueTask<RedisWorkQueueDeadLetter<T>?> GetDeadLetter(string itemId, CancellationToken cancellationToken = default)
+    [RequiresUnreferencedCode("Reflection-based JSON serialization requires preserved payload types. Use the overload accepting JsonSerializerContext instead.")]
+    [RequiresDynamicCode("Reflection-based JSON serialization may require runtime code generation. Use the overload accepting JsonSerializerContext instead.")]
+    public ValueTask<RedisWorkQueueDeadLetter<T>?> GetDeadLetter(string itemId, CancellationToken cancellationToken = default)
+    {
+        return GetDeadLetterCore(null, itemId, cancellationToken);
+    }
+
+    public ValueTask<RedisWorkQueueDeadLetter<T>?> GetDeadLetter(string itemId, JsonSerializerContext jsonContext, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(jsonContext);
+        return GetDeadLetterCore(jsonContext, itemId, cancellationToken);
+    }
+
+    private async ValueTask<RedisWorkQueueDeadLetter<T>?> GetDeadLetterCore(JsonSerializerContext? jsonContext, string itemId, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(itemId);
         string? serialized = await _redis.GetHash(_deadLettersKey, itemId, cancellationToken).NoSync();
@@ -287,7 +376,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
 
         try
         {
-            return JsonUtil.Deserialize<RedisWorkQueueDeadLetter<T>>(serialized, GetJsonTypeInfo<RedisWorkQueueDeadLetter<T>>());
+            return DeserializePayload<RedisWorkQueueDeadLetter<T>>(serialized, jsonContext);
         }
         catch (Exception exception) when (exception is JsonException or NotSupportedException)
         {
@@ -296,16 +385,29 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
         }
     }
 
-    public async ValueTask<bool> RequeueDeadLetter(string itemId, CancellationToken cancellationToken = default)
+    [RequiresUnreferencedCode("Reflection-based JSON serialization requires preserved payload types. Use the overload accepting JsonSerializerContext instead.")]
+    [RequiresDynamicCode("Reflection-based JSON serialization may require runtime code generation. Use the overload accepting JsonSerializerContext instead.")]
+    public ValueTask<bool> RequeueDeadLetter(string itemId, CancellationToken cancellationToken = default)
+    {
+        return RequeueDeadLetterCore(null, itemId, cancellationToken);
+    }
+
+    public ValueTask<bool> RequeueDeadLetter(string itemId, JsonSerializerContext jsonContext, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(jsonContext);
+        return RequeueDeadLetterCore(jsonContext, itemId, cancellationToken);
+    }
+
+    private async ValueTask<bool> RequeueDeadLetterCore(JsonSerializerContext? jsonContext, string itemId, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(itemId);
-        RedisWorkQueueDeadLetter<T>? deadLetter = await GetDeadLetter(itemId, cancellationToken).NoSync();
+        RedisWorkQueueDeadLetter<T>? deadLetter = await GetDeadLetterCore(jsonContext, itemId, cancellationToken).NoSync();
 
         if (deadLetter?.Item is null)
             return false;
 
         RedisWorkQueueItem<T> item = deadLetter.Item;
-        string serializedItem = JsonUtil.Serialize(item, GetJsonTypeInfo<RedisWorkQueueItem<T>>())!;
+        string serializedItem = SerializePayload(item, jsonContext)!;
 
         bool moved = await _redis.ExecuteTransaction(transaction =>
         {
@@ -352,7 +454,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
     }
 
     private async ValueTask<RedisWorkQueueClaim<T>?> TryClaimFromPartition(string partitionKey, string ownerId,
-        RedisSemaphoreHandle permit, CancellationToken cancellationToken)
+        RedisSemaphoreHandle permit, JsonSerializerContext? jsonContext, CancellationToken cancellationToken)
     {
         string partitionQueueKey = GetPartitionQueueKey(partitionKey);
         string? itemId = await _redis.GetListValue(partitionQueueKey, 0, cancellationToken).NoSync();
@@ -368,7 +470,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
         {
             try
             {
-                item = JsonUtil.Deserialize<RedisWorkQueueItem<T>>(serialized, GetJsonTypeInfo<RedisWorkQueueItem<T>>());
+                item = DeserializePayload<RedisWorkQueueItem<T>>(serialized, jsonContext);
             }
             catch (Exception exception) when (exception is JsonException or NotSupportedException)
             {
@@ -380,7 +482,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
         {
             _logger.LogError(deserializationException, "Dead-lettering unreadable Redis work queue item {ItemId} in queue {QueueName}", itemId,
                 _options.QueueName);
-            await MovePoisonItemToDeadLetter(partitionKey, partitionQueueKey, itemId, serialized, deserializationException, cancellationToken)
+            await MovePoisonItemToDeadLetter(partitionKey, partitionQueueKey, itemId, serialized, deserializationException, jsonContext, cancellationToken)
                 .NoSync();
             return null;
         }
@@ -411,7 +513,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
             {
                 Reason = "MaximumAttemptsExceeded",
                 Details = $"The item exceeded the configured maximum of {maximumAttempts} attempts after an abandoned or expired claim."
-            }, cancellationToken).NoSync();
+            }, jsonContext, cancellationToken).NoSync();
             return null;
         }
 
@@ -432,7 +534,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
     }
 
     private async ValueTask MovePoisonItemToDeadLetter(string partitionKey, string partitionQueueKey, string itemId, string? rawPayload,
-        Exception? exception, CancellationToken cancellationToken)
+        Exception? exception, JsonSerializerContext? jsonContext, CancellationToken cancellationToken)
     {
         var deadLetter = new RedisWorkQueueDeadLetter<T>
         {
@@ -446,7 +548,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
             },
             DeadLetteredAt = DateTimeOffset.UtcNow
         };
-        string serializedDeadLetter = JsonUtil.Serialize(deadLetter, GetJsonTypeInfo<RedisWorkQueueDeadLetter<T>>())!;
+        string serializedDeadLetter = SerializePayload(deadLetter, jsonContext)!;
 
         bool moved = await _redis.ExecuteTransaction(transaction =>
         {
@@ -464,7 +566,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
     }
 
     private async ValueTask<bool> MoveOwnedItemToDeadLetter(RedisWorkQueueItem<T> item, string itemId, string claimToken, int attempt,
-        RedisWorkQueueFailure failure, CancellationToken cancellationToken)
+        RedisWorkQueueFailure failure, JsonSerializerContext? jsonContext, CancellationToken cancellationToken)
     {
         var deadLetter = new RedisWorkQueueDeadLetter<T>
         {
@@ -475,7 +577,7 @@ public sealed class RedisWorkQueue<T> : IRedisWorkQueue<T> where T : class
             Attempt = attempt,
             DeadLetteredAt = DateTimeOffset.UtcNow
         };
-        string serialized = JsonUtil.Serialize(deadLetter, GetJsonTypeInfo<RedisWorkQueueDeadLetter<T>>())!;
+        string serialized = SerializePayload(deadLetter, jsonContext)!;
 
         return await _redis.ExecuteTransaction(transaction =>
         {

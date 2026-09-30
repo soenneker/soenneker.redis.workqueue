@@ -1,6 +1,7 @@
 using System;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using AwesomeAssertions;
@@ -24,6 +25,49 @@ public sealed class RedisWorkQueueTests : HostedUnitTest
     {
         _queue = Resolve<IRedisWorkQueue<TestWork>>(true);
         _redis = Resolve<IRedisUtil>(true);
+    }
+
+    [Test]
+    public async Task Queue_operations_should_use_supplied_context(CancellationToken cancellationToken)
+    {
+        string id = Guid.NewGuid().ToString("N");
+        var context = new TestJsonContext(new JsonSerializerOptions(JsonSerializerDefaults.Web)
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
+        });
+        var item = CreateItem(id, $"{id}-partition");
+        (await _queue.Enqueue(item, context, cancellationToken)).Should().BeTrue();
+        string? payload = await _redis.GetHash(GetItemsKey(), id, cancellationToken);
+        payload.Should().Be(JsonSerializer.Serialize(item, context.RedisWorkQueueItemTestWork));
+
+        var first = await _queue.TryClaim("metadata-worker", context, cancellationToken);
+        first.Should().NotBeNull();
+        first!.Item.PartitionKey.Should().Be(item.PartitionKey);
+        (await _queue.Retry(first, context, TimeSpan.Zero, cancellationToken)).Should().BeTrue();
+
+        var second = await _queue.TryClaim("metadata-worker", context, cancellationToken);
+        second.Should().NotBeNull();
+        var failure = new RedisWorkQueueFailure { Reason = "MetadataFailure", Details = "Context forwarding" };
+        (await _queue.Retry(second!, failure, context, TimeSpan.Zero, cancellationToken)).Should().BeTrue();
+
+        var deadLetter = await _queue.GetDeadLetter(id, context, cancellationToken);
+        deadLetter.Should().NotBeNull();
+        deadLetter!.Item!.PartitionKey.Should().Be(item.PartitionKey);
+        deadLetter.Failure.Reason.Should().Be(failure.Reason);
+        (await _queue.RequeueDeadLetter(id, context, cancellationToken)).Should().BeTrue();
+
+        var requeued = await _queue.TryClaim("metadata-worker", context, cancellationToken);
+        requeued.Should().NotBeNull();
+        (await _queue.Abandon(requeued!, cancellationToken)).Should().BeTrue();
+
+        var abandoned = await _queue.TryClaim("metadata-worker", context, cancellationToken);
+        abandoned.Should().NotBeNull();
+        (await _queue.DeadLetter(abandoned!, failure, context, cancellationToken)).Should().BeTrue();
+        (await _queue.RequeueDeadLetter(id, context, cancellationToken)).Should().BeTrue();
+
+        var final = await _queue.TryClaim("metadata-worker", context, cancellationToken);
+        final.Should().NotBeNull();
+        (await _queue.Complete(final!, cancellationToken)).Should().BeTrue();
     }
 
     [Test]
