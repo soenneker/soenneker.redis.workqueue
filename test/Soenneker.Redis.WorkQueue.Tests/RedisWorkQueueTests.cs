@@ -28,7 +28,7 @@ public sealed class RedisWorkQueueTests : HostedUnitTest
     }
 
     [Test]
-    public async Task Queue_operations_should_use_supplied_context(CancellationToken cancellationToken)
+    public async ValueTask Queue_operations_should_use_supplied_context(CancellationToken cancellationToken)
     {
         string id = Guid.NewGuid().ToString("N");
         var context = new TestJsonContext(new JsonSerializerOptions(JsonSerializerDefaults.Web)
@@ -71,7 +71,7 @@ public sealed class RedisWorkQueueTests : HostedUnitTest
     }
 
     [Test]
-    public async Task Claims_should_be_round_robin_across_partitions(CancellationToken cancellationToken)
+    public async ValueTask Claims_should_be_round_robin_across_partitions(CancellationToken cancellationToken)
     {
         string id = Guid.NewGuid().ToString("N");
         await Enqueue($"{id}-a1", $"{id}-a", cancellationToken);
@@ -95,7 +95,7 @@ public sealed class RedisWorkQueueTests : HostedUnitTest
     }
 
     [Test]
-    public async Task Partition_semaphore_should_gate_claims(CancellationToken cancellationToken)
+    public async ValueTask Partition_semaphore_should_gate_claims(CancellationToken cancellationToken)
     {
         string id = Guid.NewGuid().ToString("N");
         await Enqueue($"{id}-1", id, cancellationToken);
@@ -116,7 +116,7 @@ public sealed class RedisWorkQueueTests : HostedUnitTest
     }
 
     [Test]
-    public async Task Retry_and_completed_deduplication_should_work(CancellationToken cancellationToken)
+    public async ValueTask Retry_and_completed_deduplication_should_work(CancellationToken cancellationToken)
     {
         string id = Guid.NewGuid().ToString("N");
         await Enqueue(id, id, cancellationToken);
@@ -136,7 +136,7 @@ public sealed class RedisWorkQueueTests : HostedUnitTest
     }
 
     [Test]
-    public async Task Scheduled_items_should_not_be_claimed_early(CancellationToken cancellationToken)
+    public async ValueTask Scheduled_items_should_not_be_claimed_early(CancellationToken cancellationToken)
     {
         string id = Guid.NewGuid().ToString("N");
         RedisWorkQueueItem<TestWork> item = CreateItem(id, id, DateTimeOffset.UtcNow + TimeSpan.FromMilliseconds(200));
@@ -152,7 +152,7 @@ public sealed class RedisWorkQueueTests : HostedUnitTest
     }
 
     [Test]
-    public async Task Abandoned_claim_should_be_recovered_after_lease_expires(CancellationToken cancellationToken)
+    public async ValueTask Abandoned_claim_should_be_recovered_after_lease_expires(CancellationToken cancellationToken)
     {
         string id = Guid.NewGuid().ToString("N");
         await Enqueue(id, id, cancellationToken);
@@ -172,7 +172,7 @@ public sealed class RedisWorkQueueTests : HostedUnitTest
     }
 
     [Test]
-    public async Task Abandon_should_make_item_immediately_available(CancellationToken cancellationToken)
+    public async ValueTask Abandon_should_make_item_immediately_available(CancellationToken cancellationToken)
     {
         string id = Guid.NewGuid().ToString("N");
         await Enqueue(id, id, cancellationToken);
@@ -188,7 +188,7 @@ public sealed class RedisWorkQueueTests : HostedUnitTest
     }
 
     [Test]
-    public async Task Maximum_attempts_should_dead_letter_and_support_requeue(CancellationToken cancellationToken)
+    public async ValueTask Maximum_attempts_should_dead_letter_and_support_requeue(CancellationToken cancellationToken)
     {
         string id = Guid.NewGuid().ToString("N");
         await Enqueue(id, id, cancellationToken);
@@ -217,7 +217,7 @@ public sealed class RedisWorkQueueTests : HostedUnitTest
     }
 
     [Test]
-    public async Task Unreadable_payload_should_be_dead_lettered_without_blocking_partition(CancellationToken cancellationToken)
+    public async ValueTask Unreadable_payload_should_be_dead_lettered_without_blocking_partition(CancellationToken cancellationToken)
     {
         string id = Guid.NewGuid().ToString("N");
         string partition = $"{id}-partition";
