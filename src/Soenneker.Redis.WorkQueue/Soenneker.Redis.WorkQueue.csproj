@@ -45,7 +45,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Include="Soenneker.Redis.Semaphores" Version="4.0.112" />
+        <PackageReference Include="Soenneker.Redis.Semaphores" Version="11.0.113" />
         <PackageReference Include="Soenneker.Redis.Util" Version="4.0.5514" />
     </ItemGroup>
 </Project>
